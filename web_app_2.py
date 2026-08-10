@@ -1,6 +1,6 @@
 """
-SQL AI 智能查询助手 - 方向一优化版
-优化内容：缓存、历史记录、加载动画、交互体验
+SQL AI 智能查询助手 - 完整版
+功能：自然语言生成SQL、自动识别表、多表联合查询、数据可视化
 """
 
 import streamlit as st
@@ -27,61 +27,20 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 自定义 CSS（优化视觉体验）
+# 自定义 CSS
 st.markdown("""
-    <style>
-    .stTextInput > div > div > input {
-        font-size: 16px;
-    }
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: #1f77b4;
-        margin-bottom: 0.5rem;
-    }
-    .sub-header {
-        font-size: 1rem;
-        color: #666;
-        margin-bottom: 1.5rem;
-    }
-    .history-item {
-        padding: 4px 8px;
-        border-radius: 4px;
-        margin-bottom: 2px;
-        cursor: pointer;
-    }
-    .history-item:hover {
-        background-color: #f0f2f6;
-    }
-    </style>
+<style>
+.stTextInput > div > div > input { font-size: 16px; }
+.main-header { font-size: 2.5rem; font-weight: 700; color: #1f77b4; margin-bottom: 0.5rem; }
+.sub-header { font-size: 1rem; color: #666; margin-bottom: 1.5rem; }
+</style>
 """, unsafe_allow_html=True)
-
-# ============================================
-# 数据库连接函数
-# ============================================
-@st.cache_resource
-def get_connection():
-    """获取数据库连接"""
-    conn_str = (
-        "Driver={ODBC Driver 17 for SQL Server};"
-        "Server=localhost;"
-        "Database=Northwind;"
-        "Trusted_Connection=yes;"
-    )
-    return pyodbc.connect(conn_str)
-
-# 初始化数据库连接
-try:
-    conn = get_connection()
-except Exception as e:
-    st.error(f"❌ 数据库连接失败: {e}")
-    st.stop()
 
 # ============================================
 # 初始化 Session State
 # ============================================
 if 'current_db' not in st.session_state:
-    st.session_state.current_db = "Northwind"
+    st.session_state.current_db = "NBS"
 if 'history' not in st.session_state:
     st.session_state.history = []
 if 'query_count' not in st.session_state:
@@ -92,171 +51,13 @@ if 'last_sql' not in st.session_state:
     st.session_state.last_sql = None
 if 'last_question' not in st.session_state:
     st.session_state.last_question = None
-
-@st.cache_resource
-def get_connection(db_name):
-    """动态获取数据库连接"""
-    conn_str = (
-        "Driver={ODBC Driver 17 for SQL Server};"
-        "Server=localhost;"
-        f"Database={db_name};"
-        "Trusted_Connection=yes;"
-    )
-    return pyodbc.connect(conn_str)
-
-# 初始化连接
-conn = get_connection(st.session_state.current_db)
-
-# ============================================
-# 标题
-# ============================================
-st.markdown('<p class="main-header">🤖 SQL AI 智能查询助手</p >', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">基于 Qwen2.5-7B 本地部署 | 支持多表查询 | 自动可视化</p >', unsafe_allow_html=True)
-
-# ============================================
-# 侧边栏：配置 + 历史
-# ============================================
-
-# ✅ conn 在这里定义（在 with st.sidebar 之前）
-try:
-    conn = get_connection()
-    st.sidebar.success("✅ 数据库连接成功")
-except Exception as e:
-    st.sidebar.error(f"❌ 连接失败: {e}")
-    st.stop()
-
-with st.sidebar:
-    st.header("⚙️ 数据库配置")
-
-    # ✅ 数据库切换（下拉选择）
-    db_options = ["NBS", "Northwind"]
-    current_db = st.session_state.get('current_db', 'NBS')
-    default_index = db_options.index(current_db) if current_db in db_options else 0
-
-    database = st.selectbox(
-        "选择数据库",
-        options=db_options,
-        index=default_index,
-        key="db_select"
-    )
-
-    # ✅ 如果切换了数据库，更新状态并刷新
-    if database != st.session_state.get('current_db'):
-        st.session_state.current_db = database
-        # 清空所有缓存
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        st.rerun()
-
-    # 显示当前数据库
-    st.caption(f"当前连接: {database}")
-
-    table_name = st.text_input(
-        "查询表名（留空自动识别）",
-        value="",
-        key="table_name",
-        placeholder="留空则AI自动识别表",
-        help="输入表名则强制使用该表，留空则AI自动识别"
-    )
-
-    # ============================================
-    # 2. 快捷查询
-    # ============================================
-    st.divider()
-    st.markdown("### ⚡ 快捷查询")
-
-    quick_queries = [
-        ("📈 CPI月率 > 2", "查询CPI月率大于2的数据"),
-        ("📊 GDP年度数据", "查询GDP年度数据"),
-        ("💰 M2货币供应量", "查询M2货币供应量"),
-        ("📉 PMI指数", "查询PMI月度数据"),
-        ("🏦 LPR利率", "查询LPR利率"),
-        ("📊 制造业同比增长", "查询制造业-同比增长大于4的月份")
-    ]
-
-    # 用两列布局显示快捷按钮
-    col1, col2 = st.columns(2)
-    for i, (label, q) in enumerate(quick_queries):
-        if i % 2 == 0:
-            with col1:
-                if st.button(label, use_container_width=True, key=f"quick_{i}"):
-                    st.session_state.quick_question = q
-        else:
-            with col2:
-                if st.button(label, use_container_width=True, key=f"quick_{i}"):
-                    st.session_state.quick_question = q
-
-    # ============================================
-    # 3. 查询历史
-    # ============================================
-    st.divider()
-    st.markdown("### 📜 查询历史")
-
-    # 显示历史条数
-    st.caption(f"📊 共 {len(st.session_state.history)} 条记录")
-
-    if st.session_state.history:
-        # 只显示最近10条
-        for idx, (q, t) in enumerate(st.session_state.history[-10:]):
-            # 根据是否成功显示不同图标
-            if q.startswith("❌"):
-                icon = "❌"
-                display_q = q[2:]  # 去掉 ❌ 前缀
-            elif q.startswith("🔗"):
-                icon = "🔗"
-                display_q = q[2:]  # 去掉 🔗 前缀
-            else:
-                icon = "✅"
-                display_q = q
-
-            display_q = display_q[:30] + "..." if len(display_q) > 30 else display_q
-            button_label = f"{icon} {t} {display_q}"
-
-            if st.button(button_label, key=f"hist_{idx}_{t}_{i}", use_container_width=True):
-                # 如果点击历史记录，自动填入输入框
-                st.session_state.hist_question = q
-    else:
-        st.caption("暂无查询历史，开始查询吧！")
-
-    # ============================================
-    # 4. 查询模式（新功能）
-    # ============================================
-    st.divider()
-    st.markdown("### 🔍 查询模式")
-
-    # 显示上次查询模式
-    if 'last_query_mode' in st.session_state and st.session_state.last_query_mode:
-        st.caption(f"📌 上次查询: {st.session_state.last_query_mode}")
-    else:
-        st.caption("📌 尚未查询")
-
-    # 模式说明
-    st.caption("💡 不指定表名时自动识别")
-    st.caption("💡 包含'对比'/'和'等词自动切换多表")
-
-    # ============================================
-    # 5. 数据库状态
-    # ============================================
-    st.divider()
-    st.markdown("### 📊 数据库状态")
-    st.caption(f"🗄️ 数据库: {database}")
-    st.caption(f"📋 当前表: {table_name if table_name else '自动识别'}")
-    st.caption(f"🔢 总查询次数: {st.session_state.query_count}")
-
-    # 显示连接状态
-    try:
-        # 测试连接是否有效
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        st.success("✅ 数据库连接正常")
-    except:
-        st.error("❌ 数据库连接断开")
+if 'last_query_mode' not in st.session_state:
+    st.session_state.last_query_mode = ""
 
 
 # ============================================
-# 数据库连接
+# 数据库连接函数（唯一定义）
 # ============================================
-@st.cache_resource
 def get_connection(db_name=None):
     """动态获取数据库连接"""
     if db_name is None:
@@ -269,24 +70,169 @@ def get_connection(db_name=None):
     )
     return pyodbc.connect(conn_str)
 
+# 初始化连接（只在启动时使用）
 try:
-    conn = get_connection()
-    st.sidebar.success("✅ 数据库连接成功")
+    conn = get_connection(st.session_state.current_db)
 except Exception as e:
-    st.sidebar.error(f"❌ 连接失败: {e}")
+    st.error(f"❌ 数据库连接失败: {e}")
     st.stop()
+
+# ============================================
+# 标题
+# ============================================
+st.markdown('<p class="main-header">🤖 SQL AI 智能查询助手</p >', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">基于 Qwen2.5-7B 本地部署 | 支持多表查询 | 自动可视化</p >', unsafe_allow_html=True)
+
+# ============================================
+# 侧边栏
+# ============================================
+with st.sidebar:
+    st.header("⚙️ 数据库配置")
+
+    # 数据库切换
+    db_options = ["NBS", "Northwind"]
+    current_db = st.session_state.get('current_db', 'NBS')
+    default_index = db_options.index(current_db) if current_db in db_options else 0
+
+    database = st.selectbox(
+        "选择数据库",
+        options=db_options,
+        index=default_index,
+        key="db_select"
+    )
+
+    if database != st.session_state.get('current_db'):
+        st.session_state.current_db = database
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.rerun()
+
+    st.caption(f"当前连接: {database}")
+
+    table_name = st.text_input(
+        "查询表名（留空自动识别）",
+        value="",
+        key="table_name",
+        placeholder="留空则AI自动识别表",
+        help="输入表名则强制使用该表，留空则AI自动识别"
+    )
+
+    # 快捷查询
+    st.divider()
+    st.markdown("### ⚡ 快捷查询")
+
+    quick_queries = [
+        ("📈 CPI月率 > 2", "查询CPI月率大于2的数据"),
+        ("📊 GDP年度数据", "查询GDP年度数据"),
+        ("💰 M2货币供应量", "查询M2货币供应量"),
+        ("📉 PMI指数", "查询PMI月度数据"),
+        ("🏦 LPR利率", "查询LPR利率"),
+        ("📊 制造业同比增长", "查询制造业-同比增长大于4的月份"),
+        ("👥 客户订单数", "查询每个客户的订单数量")
+    ]
+
+    col1, col2 = st.columns(2)
+    for i, (label, q) in enumerate(quick_queries):
+        target_col = col1 if i % 2 == 0 else col2
+        if target_col.button(label, use_container_width=True, key=f"quick_{i}"):
+            st.session_state.quick_question = q
+
+    # 查询历史
+    st.divider()
+    st.markdown("### 📜 查询历史")
+    st.caption(f"📊 共 {len(st.session_state.history)} 条记录")
+
+    if st.session_state.history:
+        for idx, (q, t) in enumerate(st.session_state.history[-10:]):
+            icon = "❌" if q.startswith("❌") else "🔗" if q.startswith("🔗") else "✅"
+            display_q = q[2:] if q.startswith(("❌", "🔗")) else q
+            display_q = display_q[:30] + "..." if len(display_q) > 30 else display_q
+
+            if st.button(f"{icon} {t} {display_q}", key=f"hist_{idx}_{t}", use_container_width=True):
+                st.session_state.hist_question = q
+    else:
+        st.caption("暂无查询历史，开始查询吧！")
+
+    # 查询模式
+    st.divider()
+    st.markdown("### 🔍 查询模式")
+    st.caption(f"📌 上次查询: {st.session_state.last_query_mode if st.session_state.last_query_mode else '尚未查询'}")
+    st.caption("💡 不指定表名时自动识别")
+    st.caption("💡 包含'对比'/'和'等词自动切换多表")
+
+    # 数据库状态
+    st.divider()
+    st.markdown("### 📊 数据库状态")
+    st.caption(f"🗄️ 数据库: {database}")
+    st.caption(f"📋 当前表: {table_name if table_name else '自动识别'}")
+    st.caption(f"🔢 总查询次数: {st.session_state.query_count}")
+
+    try:
+        test_conn = get_connection(st.session_state.current_db)
+        test_conn.close()
+        st.success("✅ 数据库连接正常")
+    except:
+        st.error("❌ 数据库连接断开")
+
+
+# ============================================
+# 获取表结构（带缓存）
+# ============================================
+@st.cache_data(ttl=3600)
+def get_table_schema_cached(table_name):
+    """获取表结构，带缓存，并附加示例数据帮助AI理解"""
+    conn_local = None
+    try:
+        conn_local = get_connection(st.session_state.current_db)
+        cursor = conn_local.cursor()
+        cursor.execute("""
+            SELECT COLUMN_NAME, DATA_TYPE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = ?
+        """, (table_name,))
+        cols = cursor.fetchall()
+
+        if not cols:
+            return f"Table: {table_name} (结构未知，请检查表名是否正确)"
+
+        schema = f"Table: {table_name}\n"
+        schema += "字段说明:\n"
+        for col_name, data_type in cols:
+            schema += f"  - {col_name}: {data_type}\n"
+
+        try:
+            sample_df = pd.read_sql_query(f"SELECT TOP 3 * FROM {table_name}", conn_local)
+            if not sample_df.empty:
+                schema += "\n示例数据 (前3行):\n"
+                schema += sample_df.to_string(index=False)
+        except Exception as e:
+            schema += f"\n(无法获取示例数据: {e})"
+
+        return schema
+    except Exception as e:
+        return f"Error: {str(e)}"
+    finally:
+        if conn_local:
+            try:
+                conn_local.close()
+            except:
+                pass
 
 
 # ============================================
 # 获取所有表结构（用于多表查询）
 # ============================================
+@st.cache_data(ttl=3600)
 def get_all_tables_schema():
-    """获取数据库中所有用户表的结构"""
+    """获取数据库中所有用户表的结构（精简版）"""
+    conn_local = None
     try:
-        cursor = conn.cursor()
+        conn_local = get_connection(st.session_state.current_db)
+        cursor = conn_local.cursor()
+
         cursor.execute("""
-            SELECT TABLE_NAME 
-            FROM INFORMATION_SCHEMA.TABLES 
+            SELECT TABLE_NAME
+            FROM INFORMATION_SCHEMA.TABLES
             WHERE TABLE_TYPE='BASE TABLE'
             ORDER BY TABLE_NAME
         """)
@@ -298,45 +244,46 @@ def get_all_tables_schema():
         all_schema = ""
         for table_name in tables:
             cursor.execute("""
-                SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-                FROM INFORMATION_SCHEMA.COLUMNS 
+                SELECT COLUMN_NAME, DATA_TYPE
+                FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_NAME = ?
                 ORDER BY ORDINAL_POSITION
             """, (table_name,))
             cols = cursor.fetchall()
-
-            all_schema += f"Table: {table_name}\n"
-            for col_name, data_type, is_nullable in cols:
-                nullable = "NULL" if is_nullable == "YES" else "NOT NULL"
-                all_schema += f"  - {col_name}: {data_type} ({nullable})\n"
-            all_schema += "\n"
+            col_names = ", ".join([f"[{col[0]}]" for col in cols])
+            all_schema += f"Table [{table_name}] has columns: {col_names}\n"
 
         return all_schema
     except Exception as e:
         return f"Error getting schema: {e}"
-
+    finally:
+        if conn_local:
+            try:
+                conn_local.close()
+            except:
+                pass
 
 # ============================================
 # 自动识别表名
 # ============================================
 def detect_table(question):
     """根据用户问题自动识别应该查询哪张表"""
+    conn_local = None
     try:
-        cursor = conn.cursor()
+        conn_local = get_connection(st.session_state.current_db)
+        cursor = conn_local.cursor()
         cursor.execute("""
-            SELECT TABLE_NAME 
-            FROM INFORMATION_SCHEMA.TABLES 
+            SELECT TABLE_NAME
+            FROM INFORMATION_SCHEMA.TABLES
             WHERE TABLE_TYPE='BASE TABLE'
             ORDER BY TABLE_NAME
         """)
         tables = [row[0] for row in cursor.fetchall()]
 
         if not tables:
-            print("❌ 数据库中没有表")
             return None
 
         tables_str = ", ".join(tables)
-        print(f"📋 可用的表: {tables}")
 
         prompt = f"""根据用户问题，从以下表中选择最相关的一张表，只输出表名，不要输出任何其他内容。
 
@@ -357,29 +304,25 @@ def detect_table(question):
         )
         detected = response.json()['response'].strip()
         detected = detected.replace('"', '').replace("'", '').replace('[', '').replace(']', '').strip()
-        print(f"🔍 AI 返回的表名: '{detected}'")
 
-        # 1. 精确匹配
+        # 精确匹配
         for t in tables:
             if t == detected:
-                print(f"✅ 精确匹配: {t}")
                 return t
 
-        # 2. 忽略大小写匹配
+        # 忽略大小写匹配
         for t in tables:
             if t.lower() == detected.lower():
-                print(f"✅ 忽略大小写匹配: {t}")
                 return t
 
-        # 3. 包含匹配（处理表名包含空格的情况）
+        # 包含匹配
         for t in tables:
             t_clean = t.replace(" ", "")
             detected_clean = detected.replace(" ", "")
             if detected_clean.lower() in t_clean.lower() or t_clean.lower() in detected_clean.lower():
-                print(f"✅ 包含匹配: {t}")
                 return t
 
-        # 4. 关键词映射
+        # 关键词映射
         keyword_map = {
             '客户': 'Customers', '顾客': 'Customers',
             '订单': 'Orders', '产品': 'Products', '商品': 'Products',
@@ -389,219 +332,44 @@ def detect_table(question):
         }
         for keyword, table in keyword_map.items():
             if keyword in question and table in tables:
-                print(f"✅ 关键词匹配: {keyword} → {table}")
                 return table
 
-        # 5. 兜底：返回第一个表
-        print(f"⚠️ 使用默认表: {tables[0]}")
         return tables[0] if tables else None
 
     except Exception as e:
-        print(f"❌ 自动识别表失败: {e}")
-        # 出错时返回第一个表作为兜底
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'")
-            first = cursor.fetchone()
-            return first[0] if first else None
-        except:
-            return None
-
-# ============================================
-# 获取表结构（带缓存 + 示例数据）
-# ============================================
-@st.cache_data(ttl=3600)
-def get_table_schema_cached(table_name):
-    """获取表结构，带缓存，并附加示例数据帮助AI理解"""
-    cursor = conn.cursor()
-    try:
-        # 1. 获取列信息
-        cursor.execute("""
-            SELECT COLUMN_NAME, DATA_TYPE 
-            FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_NAME = ?
-        """, (table_name,))
-        cols = cursor.fetchall()
-
-        if not cols:
-            return f"Table: {table_name} (结构未知，请检查表名是否正确)"
-
-        # 2. 构建表结构描述
-        schema = f"Table: {table_name}\n"
-        schema += "字段说明:\n"
-        for col_name, data_type in cols:
-            schema += f"  - {col_name}: {data_type}\n"
-
-        # 3. 增加示例数据（帮助AI理解字段含义和格式）
-        try:
-            sample_df = pd.read_sql_query(f"SELECT TOP 3 * FROM {table_name}", conn)
-            if not sample_df.empty:
-                schema += "\n示例数据 (前3行):\n"
-                schema += sample_df.to_string(index=False)
-        except Exception as e:
-            schema += f"\n(无法获取示例数据: {e})"
-
-        return schema
-    except Exception as e:
-        return f"Error: {str(e)}"
+        print(f"detect_table 错误: {e}")
+        return None
+    finally:
+        if conn_local:
+            try:
+                conn_local.close()
+            except:
+                pass
 
 
 # ============================================
-# 获取所有表结构（用于多表查询）
-# ============================================
-@st.cache_data(ttl=3600)
-def get_all_tables_schema():
-    """获取数据库中所有用户表的结构（精简版）"""
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT TABLE_NAME 
-        FROM INFORMATION_SCHEMA.TABLES 
-        WHERE TABLE_TYPE='BASE TABLE'
-        ORDER BY TABLE_NAME
-    """)
-    tables = [row[0] for row in cursor.fetchall()]
-
-    if not tables:
-        return "No tables found in database."
-
-    all_schema = ""
-    for table_name in tables:
-        cursor.execute("""
-            SELECT COLUMN_NAME, DATA_TYPE
-            FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_NAME = ?
-            ORDER BY ORDINAL_POSITION
-        """, (table_name,))
-        cols = cursor.fetchall()
-
-        # 精简格式：表名 + 列名列表
-        col_names = ", ".join([f"[{col[0]}]" for col in cols])
-        all_schema += f"Table [{table_name}] has columns: {col_names}\n"
-
-    return all_schema
-
-
-# ============================================
-# 自动识别表名（方案一）
-# ============================================
-@st.cache_data(ttl=3600)
-def get_all_tables_schema():
-    """获取数据库中所有用户表的结构（增强版 + 调试）"""
-    cursor = conn.cursor()
-
-    # 获取所有用户表
-    cursor.execute("""
-        SELECT TABLE_NAME 
-        FROM INFORMATION_SCHEMA.TABLES 
-        WHERE TABLE_TYPE='BASE TABLE'
-        ORDER BY TABLE_NAME
-    """)
-    tables = [row[0] for row in cursor.fetchall()]
-
-    if not tables:
-        return "No tables found in database."
-
-    all_schema = ""
-    for table_name in tables:
-        # 获取列信息
-        cursor.execute("""
-            SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-            FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_NAME = ?
-            ORDER BY ORDINAL_POSITION
-        """, (table_name,))
-        cols = cursor.fetchall()
-
-        all_schema += f"Table: {table_name}\n"
-        for col_name, data_type, is_nullable in cols:
-            nullable = "NULL" if is_nullable == "YES" else "NOT NULL"
-            all_schema += f"  - {col_name}: {data_type} ({nullable})\n"
-        all_schema += "\n"
-
-    return all_schema
-
-
-# ============================================
-# 判断是否需要多表联合查询（方案四）
+# 判断是否需要多表联合查询
 # ============================================
 def need_multi_table(question):
-    """用AI判断是否需要多表联合查询"""
-    cursor = conn.cursor()
-    cursor.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'")
-    tables = [row[0] for row in cursor.fetchall()]
+    """判断问题是否需要多表联合查询"""
+    keywords = ['对比', '比较', '和', '与', 'VS', 'vs', '同时', '分别',
+                'GDP和CPI', '各指标', '多个指标', 'GDP与CPI', '跨表',
+                '每个客户', '每位客户', '所有客户', '订单数量', '总订单']
+    for kw in keywords:
+        if kw in question:
+            return True
 
-    prompt = f"""判断用户问题是否需要查询多张表（JOIN）。
+    # 检查是否提到多个表名
+    table_names = ['cpi', 'ppi', 'pmi', 'gdp', 'm2', 'lpr', 'fdi',
+                   'customers', 'orders', 'products', 'employees']
+    count = 0
+    for name in table_names:
+        if name.lower() in question.lower():
+            count += 1
+    if count >= 2:
+        return True
 
-问题：{question}
-可用表：{tables}
-
-请只回答"是"或"否"。
-回答："""
-
-    response = requests.post(
-        'http://localhost:11434/api/generate',
-        json={
-            'model': 'qwen2.5:7b',
-            'prompt': prompt,
-            'stream': False,
-            'temperature': 0,
-            'max_tokens': 10
-        },
-        timeout=30
-    )
-    result = response.json()['response'].strip()
-    return '是' in result
-
-
-# ============================================
-# 多表联合查询（方案四）
-# ============================================
-def ask_ollama_multi_table(question):
-    """使用所有表结构生成SQL（支持跨表JOIN）"""
-    all_schemas = get_all_tables_schema()
-
-    prompt = f"""You are a SQL Server expert. Convert the user's question to SQL.
-
-【重要规则 - 必须遵守】
-1. 只输出 SQL 语句，不要输出任何解释
-2. 所有列名和表名必须使用方括号 [ ] 包裹
-3. 必须使用下面提供的实际表名和列名
-4. 不要自己编造表名或列名
-
-【所有表结构】
-{all_schemas}
-
-【用户问题】
-{question}
-
-【SQL】"""
-
-    try:
-        response = requests.post(
-            'http://localhost:11434/api/generate',
-            json={
-                'model': 'qwen2.5:7b',
-                'prompt': prompt,
-                'stream': False,
-                'temperature': 0,
-                'max_tokens': 600
-            },
-            timeout=90
-        )
-        sql = response.json()['response'].strip()
-        # 提取 SQL
-        match = re.search(r'(SELECT\s+.*?;)', sql, re.IGNORECASE | re.DOTALL)
-        if match:
-            sql = match.group(1)
-        sql = re.sub(r'```sql\s*', '', sql)
-        sql = re.sub(r'```\s*', '', sql)
-        sql = sql.strip()
-        if not sql.endswith(';'):
-            sql += ';'
-        return sql
-    except Exception as e:
-        return f"Error: {str(e)}"
+    return False
 
 
 # ============================================
@@ -609,19 +377,13 @@ def ask_ollama_multi_table(question):
 # ============================================
 @lru_cache(maxsize=50)
 def cached_ask_ollama(cache_key):
-    """
-    带缓存的AI调用
-    cache_key 包含问题和表结构，相同输入直接返回缓存结果
-    """
-    # 从cache_key中解析出问题和表结构
+    """带缓存的AI调用"""
     parts = cache_key.split('|||')
     if len(parts) != 2:
         return "Error: 缓存键格式错误"
     question, table_schema = parts
 
     prompt = f"""You are a SQL Server expert. Convert the user's question to SQL.
-
-IMPORTANT: Output ONLY the SQL query. No explanation.
 
 IMPORTANT RULES:
 1. Output ONLY the SQL query. No explanation.
@@ -646,13 +408,12 @@ SQL:"""
                 'model': 'qwen2.5:7b',
                 'prompt': prompt,
                 'stream': False,
-                'temperature': 0,  # ← 改为0，完全确定
+                'temperature': 0,
                 'max_tokens': 500
             },
             timeout=60
         )
         sql = response.json()['response'].strip()
-        # 提取 SQL
         match = re.search(r'(SELECT\s+.*?;)', sql, re.IGNORECASE | re.DOTALL)
         if match:
             sql = match.group(1)
@@ -666,28 +427,66 @@ SQL:"""
         return f"Error: {str(e)}"
 
 
-def ask_ollama_with_retry(question, table_schema, max_retries=2):
-    for attempt in range(max_retries):
-        # 生成缓存键（只传1个参数）
-        cache_key = generate_cache_key(question, table_schema)
+# ============================================
+# 多表联合查询
+# ============================================
+def ask_ollama_multi_table(question):
+    """使用所有表结构生成SQL（支持跨表JOIN）"""
+    all_schemas = get_all_tables_schema()
 
-        # ✅ 只传 cache_key（1个参数）
-        sql = cached_ask_ollama(cache_key)
+    prompt = f"""You are a SQL Server expert. Convert the user's question to SQL.
 
-        if sql.startswith('Error'):
-            print(f"第 {attempt + 1} 次尝试: AI生成失败，重试中...")
-            continue
+【最重要规则 - 必须严格遵守】
+1. 只输出 SQL 语句，不要任何解释
+2. 所有列名和表名必须使用方括号 [ ] 包裹
+3. 只使用下面列出的表名，绝对不要编造任何表名
+4. 只使用下面列出的列名，绝对不要编造任何列名
+5. 表名和列名必须严格按照下面提供的格式使用，包括大小写
 
-        # 尝试执行
-        df, error = execute_sql(sql)
-        if not error:
-            return sql, df
+【Northwind 数据库表结构（只使用这些表）】
+Table [Categories] has columns: [CategoryID], [CategoryName], [Description], [Picture]
+Table [Products] has columns: [ProductID], [ProductName], [SupplierID], [CategoryID], [QuantityPerUnit], [UnitPrice], [UnitsInStock], [UnitsOnOrder], [ReorderLevel], [Discontinued]
+Table [Order Details] has columns: [OrderID], [ProductID], [UnitPrice], [Quantity], [Discount]
+Table [Orders] has columns: [OrderID], [CustomerID], [EmployeeID], [OrderDate], [RequiredDate], [ShippedDate], [ShipVia], [Freight], [ShipName], [ShipAddress], [ShipCity], [ShipRegion], [ShipPostalCode], [ShipCountry]
 
-        # 如果执行失败，重新生成（换一种表述）
-        print(f"第 {attempt + 1} 次尝试: SQL执行失败，重试中...")
-        question = question + "（请使用正确的列名）"
+【表之间的关联关系（严格使用这些关联）】
+- Categories.CategoryID = Products.CategoryID
+- Products.ProductID = Order Details.ProductID
+- Orders.OrderID = Order Details.OrderID
+- Customers.CustomerID = Orders.CustomerID
+- Employees.EmployeeID = Orders.EmployeeID
+- Suppliers.SupplierID = Products.SupplierID
+- Shippers.ShipperID = Orders.ShipVia
 
-    return None, None
+【用户问题】
+{question}
+
+【SQL】"""
+
+    try:
+        response = requests.post(
+            'http://localhost:11434/api/generate',
+            json={
+                'model': 'qwen2.5:7b',
+                'prompt': prompt,
+                'stream': False,
+                'temperature': 0,
+                'max_tokens': 600
+            },
+            timeout=90
+        )
+        sql = response.json()['response'].strip()
+        match = re.search(r'(SELECT\s+.*?;)', sql, re.IGNORECASE | re.DOTALL)
+        if match:
+            sql = match.group(1)
+        sql = re.sub(r'```sql\s*', '', sql)
+        sql = re.sub(r'```\s*', '', sql)
+        sql = sql.strip()
+        if not sql.endswith(';'):
+            sql += ';'
+        return sql
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 
 # ============================================
@@ -698,7 +497,9 @@ def execute_sql(sql):
         clean_sql = sql.rstrip(';').strip()
         if not clean_sql.upper().startswith('SELECT'):
             return None, "⚠️ 只支持 SELECT 查询"
-        df = pd.read_sql_query(clean_sql, conn)
+        conn_local = get_connection(st.session_state.current_db)
+        df = pd.read_sql_query(clean_sql, conn_local)
+        conn_local.close()
         return df, None
     except Exception as e:
         return None, str(e)
@@ -708,23 +509,19 @@ def execute_sql(sql):
 # 生成缓存键
 # ============================================
 def generate_cache_key(question, table_schema):
-    """生成唯一的缓存键"""
     content = f"{question}|||{table_schema}"
-    return content  # 直接使用完整内容作为键，lru_cache会处理
+    return content
 
 
 # ============================================
 # 主输入区域
 # ============================================
-# 检查是否有历史记录点击触发的问题
 if 'hist_question' in st.session_state and st.session_state.hist_question:
     default_question = st.session_state.hist_question
-    # 清除，避免下次刷新时重复填充
     st.session_state.hist_question = None
 else:
     default_question = ""
 
-# 检查是否有快捷查询触发
 if 'quick_question' in st.session_state and st.session_state.quick_question:
     default_question = st.session_state.quick_question
     st.session_state.quick_question = None
@@ -743,49 +540,34 @@ with col2:
     st.write("")
     submit = st.button("🔍 查询", type="primary", use_container_width=True)
 
-# 回车触发查询
-if 'question_input' in st.session_state and st.session_state.question_input:
-    # 用 session_state 标记回车触发
-    pass
-
 # ============================================
 # 主查询逻辑
 # ============================================
 if submit and question:
-    # 开始计时
     start_time = time.time()
-    error = None
 
-    # ============================================
-    # 智能路由：自动选择查询模式
-    # ============================================
-
-    # 1. 判断是否需要多表查询
+    # 智能路由
     is_multi = need_multi_table(question)
-
-    # 2. 如果用户手动指定了表名，优先使用用户指定的
-    user_selected_table = table_name  # 来自侧边栏输入框
+    user_selected_table = table_name
 
     if user_selected_table and user_selected_table.strip():
-        # 用户手动指定了表名，使用单表模式
         use_table = user_selected_table
         query_mode = "单表查询（用户指定）"
-        is_multi = False  # 强制单表
+        is_multi = False
     else:
-        # 用户没有指定表名，自动识别
         detected = detect_table(question)
         if detected:
             use_table = detected
             query_mode = "单表查询（自动识别）"
-            # 显示自动识别的结果
             st.sidebar.success(f"🔍 自动识别: {use_table}")
         else:
             use_table = None
             query_mode = "待判断"
 
-    # 3. 如果涉及多表或用户问题包含对比关键词，切换到多表模式
+    # 多表查询
     if is_multi and not user_selected_table:
         query_mode = "多表联合查询（自动切换）"
+        st.session_state.last_query_mode = query_mode
         st.sidebar.info(f"🔗 自动切换到多表联合查询模式")
 
         with st.spinner("🧠 AI 正在生成跨表 SQL（可能需要20-40秒）..."):
@@ -796,7 +578,6 @@ if submit and question:
             st.session_state.history.append((f"❌ 多表查询失败: {question[:30]}", datetime.now().strftime("%H:%M")))
             st.stop()
 
-        # 执行 SQL
         with st.spinner("⏳ 正在执行跨表查询..."):
             df, error = execute_sql(sql)
 
@@ -805,7 +586,6 @@ if submit and question:
             st.session_state.history.append((f"❌ SQL执行失败: {question[:30]}", datetime.now().strftime("%H:%M")))
             st.stop()
 
-        # 显示结果
         with st.expander("📝 查看生成的 SQL", expanded=True):
             st.code(sql, language="sql")
 
@@ -830,34 +610,7 @@ if submit and question:
             st.stop()
 
     else:
-        # ============================================
-        # 单表查询模式（原有的查询逻辑）
-        # ============================================
-
-        # 如果用户没有指定表名，自动识别
-        if not user_selected_table or not user_selected_table.strip():
-            detected = detect_table(question)
-            if detected:
-                use_table = detected
-                query_mode = "单表查询（自动识别）"
-                st.sidebar.success(f"🔍 自动识别: {use_table}")
-            else:
-                # ✅ 即使识别失败，也使用第一个表作为兜底
-                cursor = conn.cursor()
-                cursor.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'")
-                first_table = cursor.fetchone()
-                if first_table:
-                    use_table = first_table[0]
-                    st.sidebar.warning(f"⚠️ 自动识别失败，使用默认表: {use_table}")
-                else:
-                    st.error("❌ 数据库中没有可用的表")
-                    st.stop()
-
-        # ============================================
-        # 单表查询模式
-        # ============================================
-
-        # 如果用户没有指定表名，使用自动识别的表
+        # 单表查询
         if not user_selected_table or not user_selected_table.strip():
             if use_table:
                 table_name = use_table
@@ -865,14 +618,12 @@ if submit and question:
                 st.error("❌ 无法自动识别表，请在侧边栏手动指定表名")
                 st.stop()
 
-        # ✅ 先获取表结构（必须在这里定义 table_schema）
         table_schema = get_table_schema_cached(table_name)
 
         if table_schema.startswith("Error"):
             st.error(f"❌ 获取表结构失败: {table_schema}")
             st.stop()
 
-        # 生成缓存键并调用AI
         cache_key = generate_cache_key(question, table_schema)
 
         with st.spinner(f"🧠 AI 正在生成 SQL（查询表: {table_name}）..."):
@@ -883,11 +634,9 @@ if submit and question:
             st.session_state.history.append((f"❌ AI错误: {question[:30]}", datetime.now().strftime("%H:%M")))
             st.stop()
 
-        # 显示 SQL
         with st.expander("📝 查看生成的 SQL", expanded=True):
             st.code(sql, language="sql")
 
-        # 执行查询
         with st.spinner("⏳ 正在执行查询..."):
             df, error = execute_sql(sql)
 
@@ -896,31 +645,6 @@ if submit and question:
             st.session_state.history.append((f"❌ SQL错误: {question[:30]}", datetime.now().strftime("%H:%M")))
             st.stop()
 
-        # 生成缓存键并调用AI
-        cache_key = generate_cache_key(question, table_schema)
-
-        with st.spinner(f"🧠 AI 正在生成 SQL（查询表: {table_name}）..."):
-            sql = cached_ask_ollama(cache_key)
-
-        if sql.startswith("Error"):
-            st.error(f"❌ {sql}")
-            st.session_state.history.append((f"❌ AI错误: {question[:30]}", datetime.now().strftime("%H:%M")))
-            st.stop()
-
-        # 显示 SQL
-        with st.expander("📝 查看生成的 SQL", expanded=True):
-            st.code(sql, language="sql")
-
-        # 执行查询
-        with st.spinner("⏳ 正在执行查询..."):
-            df, error = execute_sql(sql)
-
-        if error:
-            st.error(f"❌ {error}")
-            st.session_state.history.append((f"❌ SQL错误: {question[:30]}", datetime.now().strftime("%H:%M")))
-            st.stop()
-
-        # 查询成功
         st.session_state.query_count += 1
         st.session_state.df_result = df
         st.session_state.last_sql = sql
@@ -935,12 +659,6 @@ if submit and question:
         if len(st.session_state.history) > 20:
             st.session_state.history = st.session_state.history[-20:]
 
-        # 显示缓存状态
-        if hasattr(cached_ask_ollama, 'cache_info'):
-            info = cached_ask_ollama.cache_info()
-            if info.hits > 0:
-                st.caption("💡 本次查询来自缓存")
-
         st.rerun()
 
 # ============================================
@@ -949,17 +667,14 @@ if submit and question:
 if st.session_state.df_result is not None:
     df = st.session_state.df_result
 
-    # 判断是否有数值列用于图表
     numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
     text_cols = df.select_dtypes(include=['object']).columns.tolist()
 
-    # Tab 切换
     tab1, tab2, tab3 = st.tabs(["📋 数据表格", "📊 图表可视化", "📈 数据统计"])
 
     with tab1:
         st.dataframe(df, use_container_width=True, height=400)
 
-        # 导出按钮
         col1, col2, col3 = st.columns(3)
         with col1:
             csv = df.to_csv(index=False).encode('utf-8')
@@ -971,10 +686,8 @@ if st.session_state.df_result is not None:
                 use_container_width=True
             )
         with col2:
-            # 显示行数
             st.caption(f"共 {len(df)} 行数据")
         with col3:
-            # 如果数据量不大，显示列信息
             if len(df.columns) <= 10:
                 st.caption(f"列: {', '.join(df.columns.tolist())}")
 
@@ -982,12 +695,10 @@ if st.session_state.df_result is not None:
         if numeric_cols and (text_cols or numeric_cols):
             st.subheader("📊 数据可视化")
 
-            # 自动选择X轴和Y轴
             if text_cols:
                 default_x = text_cols[0]
             else:
                 default_x = numeric_cols[0]
-            default_y = numeric_cols[0] if numeric_cols else None
 
             x_col = st.selectbox("X 轴", df.columns.tolist(),
                                  index=df.columns.tolist().index(default_x) if default_x in df.columns else 0)
@@ -1018,7 +729,6 @@ if st.session_state.df_result is not None:
         else:
             st.info("💡 没有数值列，无法生成统计信息")
 
-        # 显示数据基本信息
         with st.expander("📋 数据信息"):
             st.write(f"**行数**: {len(df)}")
             st.write(f"**列数**: {len(df.columns)}")
@@ -1031,6 +741,3 @@ if st.session_state.df_result is not None:
 # ============================================
 st.divider()
 st.caption("🤖 SQL AI 智能查询助手 | 技术栈: Qwen2.5-7B + Streamlit + SQL Server | 数据来源: 国家统计局")
-
-# 显示缓存信息（调试用，可注释掉）
-# st.caption(f"缓存状态: {cached_ask_ollama.cache_info()}")
