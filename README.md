@@ -55,6 +55,7 @@ SQL AI 智能查询助手 是一个基于本地大模型的自然语言数据查
 自然语言生成SQL 输入中文问题，AI自动生成并执行SQL
 自动识别表名 无需手动指定表名，系统根据问题自动选择最相关的表
 多表联合查询 检测到"对比"、"和"等关键词时，自动切换到多表JOIN模式
+四表 JOIN 支持 支持 Categories → Products → Order Details → Orders 等多层关联
 数据可视化 查询结果自动生成折线图、柱状图、散点图
 数据导出 一键导出CSV格式，方便二次分析
 查询历史 自动记录查询历史，点击即可复用
@@ -143,29 +144,55 @@ AI生成SQL：
 SELECT * FROM cpi_monthly WHERE [CPI] > 2
 ```
 
-示例2：多表联合查询
+示例2：两表 JOIN
 
-输入：
-
-查询每个客户的订单数量
+输入：查询每个客户的订单数量
 
 AI生成SQL：
 
 ```sql
-SELECT 
-    c.CompanyName,
-    COUNT(o.OrderID) AS OrderCount
-FROM 
-    Customers c
-LEFT JOIN 
-    Orders o ON c.CustomerID = o.CustomerID
-GROUP BY 
-    c.CompanyName
-ORDER BY 
-    OrderCount DESC;
+SELECT [Customers].[CompanyName], COUNT([Orders].[OrderID]) AS OrderCount
+FROM [Customers]
+LEFT JOIN [Orders] ON [Customers].[CustomerID] = [Orders].[CustomerID]
+GROUP BY [Customers].[CompanyName]
+ORDER BY OrderCount DESC
 ```
 
-示例3：数据可视化
+示例3：三表 JOIN
+
+输入：查询每个客户的订单总金额，同时显示员工的名字
+
+AI生成SQL：
+
+```sql
+SELECT [Customers].[CompanyName], [Employees].[FirstName] + ' ' + [Employees].[LastName] AS EmployeeName,
+       SUM([Order Details].[UnitPrice] * [Order Details].[Quantity]) AS TotalAmount
+FROM [Customers]
+INNER JOIN [Orders] ON [Customers].[CustomerID] = [Orders].[CustomerID]
+INNER JOIN [Employees] ON [Orders].[EmployeeID] = [Employees].[EmployeeID]
+INNER JOIN [Order Details] ON [Orders].[OrderID] = [Order Details].[OrderID]
+GROUP BY [Customers].[CompanyName], [Employees].[FirstName], [Employees].[LastName]
+ORDER BY TotalAmount DESC
+```
+
+示例4：四表 JOIN
+
+输入：统计每个产品类别的销售总额
+
+AI生成SQL：
+
+```sql
+SELECT [Categories].[CategoryName],
+       SUM([Order Details].[UnitPrice] * [Order Details].[Quantity]) AS TotalSales
+FROM [Categories]
+INNER JOIN [Products] ON [Categories].[CategoryID] = [Products].[CategoryID]
+INNER JOIN [Order Details] ON [Products].[ProductID] = [Order Details].[ProductID]
+INNER JOIN [Orders] ON [Order Details].[OrderID] = [Orders].[OrderID]
+GROUP BY [Categories].[CategoryName]
+ORDER BY TotalSales DESC
+```
+
+示例5：数据可视化
 
 输入：
 
@@ -186,16 +213,18 @@ AI模型 Qwen2.5-7B (Ollama)
 
 📝 更新日志
 
-v3.0 (2026-08-15)
+v3.0 (2026-08-10)
 
 · ✨ 新增多表联合查询（自动切换）
-· ✨ 新增Northwind测试数据库支持
+· ✨ 新增 Northwind 测试数据库支持
+· ✨ 新增四表 JOIN 支持
 · ✨ 新增自动识别表名功能
 · ✨ 新增查询历史记录
-· 🐛 修复列名特殊字符报错
-· 🐛 修复自动识别表失败时的兜底逻辑
+· 🐛 修复 AS 语法错误
+· 🐛 修复列名识别问题
+· 🐛 修复数据库连接管理
 
-v2.0 (2026-08-10)
+v2.0 (2026-08-09)
 
 · ✨ 新增Web界面（Streamlit）
 · ✨ 新增数据可视化（图表）
