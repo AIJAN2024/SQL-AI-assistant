@@ -224,7 +224,7 @@ def get_table_schema_cached(table_name):
 # ============================================
 @st.cache_data(ttl=3600)
 def get_all_tables_schema():
-    """获取数据库中所有用户表的结构（精简版）"""
+    """获取数据库中所有用户表的结构（超清晰格式）"""
     conn_local = None
     try:
         conn_local = get_connection(st.session_state.current_db)
@@ -250,10 +250,18 @@ def get_all_tables_schema():
                 ORDER BY ORDINAL_POSITION
             """, (table_name,))
             cols = cursor.fetchall()
-            col_names = ", ".join([f"[{col[0]}]" for col in cols])
-            all_schema += f"Table [{table_name}] has columns: {col_names}\n"
+
+            # ✅ 修正：使用正确的方括号
+            all_schema += f"\n=== 表名: [{table_name}] ===\n"
+            all_schema += "列名: "
+            col_list = []
+            for col in cols:
+                col_list.append(f"[{col[0]}]")  # ✅ 这里用 ] 不是 }
+            all_schema += ", ".join(col_list)
+            all_schema += "\n"
 
         return all_schema
+
     except Exception as e:
         return f"Error getting schema: {e}"
     finally:
@@ -350,23 +358,38 @@ def detect_table(question):
 # ============================================
 # 判断是否需要多表联合查询
 # ============================================
+from business_knowledge import detect_business_terms
+
+
 def need_multi_table(question):
     """判断问题是否需要多表联合查询"""
     keywords = ['对比', '比较', '和', '与', 'VS', 'vs', '同时', '分别',
                 'GDP和CPI', '各指标', '多个指标', 'GDP与CPI', '跨表',
-                '每个客户', '每位客户', '所有客户', '订单数量', '总订单']
+                '每个客户', '每位客户', '所有客户', '订单数量', '总订单',
+                '每个类别', '每个产品', '每个员工', '每个供应商', '每个国家',
+                '购买了', '购买过', '超过', '大于', '多于',
+                '不同产品', '种产品']
     for kw in keywords:
         if kw in question:
             return True
 
-    # 检查是否提到多个表名
-    table_names = ['cpi', 'ppi', 'pmi', 'gdp', 'm2', 'lpr', 'fdi',
-                   'customers', 'orders', 'products', 'employees']
+    # ✅ 新增：检测是否涉及多个实体统计
+    table_names = ['客户', '订单', '产品', '员工', '供应商', '类别', '物流']
     count = 0
     for name in table_names:
-        if name.lower() in question.lower():
+        if name in question:
             count += 1
-    if count >= 2:
+    if count >= 3:  # 提到3个及以上实体 → 多表查询
+        return True
+
+    # 原有英文表名检测
+    table_names_en = ['cpi', 'ppi', 'pmi', 'gdp', 'm2', 'lpr', 'fdi',
+                      'customers', 'orders', 'products', 'employees', 'categories']
+    count_en = 0
+    for name in table_names_en:
+        if name.lower() in question.lower():
+            count_en += 1
+    if count_en >= 2:
         return True
 
     return False
@@ -430,33 +453,46 @@ SQL:"""
 # ============================================
 # 多表联合查询
 # ============================================
+from business_knowledge import BUSINESS_TERMS, TABLE_JOINS, detect_business_terms
+
+
 def ask_ollama_multi_table(question):
-    """使用所有表结构生成SQL（支持跨表JOIN）"""
+    """使用所有表结构 + 业务知识生成SQL"""
     all_schemas = get_all_tables_schema()
+
+    # 检测业务术语
+    matched_terms = detect_business_terms(question)
+
+    # 构建业务知识提示
+    biz_knowledge = ""
+    if matched_terms:
+        biz_knowledge = "\n【检测到的业务术语 - 使用这些信息】\n"
+        for m in matched_terms:
+            config = m["config"]
+            biz_knowledge += f"- 术语 '{m['term']}':\n"
+            if "tables" in config:
+                biz_knowledge += f"  涉及表: {config['tables']}\n"
+            if "table" in config:
+                biz_knowledge += f"  涉及表: {config['table']}\n"
+            if "formula" in config:
+                biz_knowledge += f"  计算公式: {config['formula']}\n"
+            if "join_path" in config:
+                biz_knowledge += f"  关联路径: {config['join_path']}\n"
+            if "alias" in config:
+                biz_knowledge += f"  别名: {config['alias']}\n"
 
     prompt = f"""You are a SQL Server expert. Convert the user's question to SQL.
 
 【最重要规则 - 必须严格遵守】
 1. 只输出 SQL 语句，不要任何解释
-2. 所有列名和表名必须使用方括号 [ ] 包裹
-3. 只使用下面列出的表名，绝对不要编造任何表名
-4. 只使用下面列出的列名，绝对不要编造任何列名
-5. 表名和列名必须严格按照下面提供的格式使用，包括大小写
+2. 所有列名和表名用方括号 [ ] 包裹
+3. 必须使用下面提供的**实际表名和列名**，不要自己编造
+4. 如果问题涉及"销售总额"，使用公式：SUM([Order Details].[UnitPrice] * [Order Details].[Quantity])
 
-【Northwind 数据库表结构（只使用这些表）】
-Table [Categories] has columns: [CategoryID], [CategoryName], [Description], [Picture]
-Table [Products] has columns: [ProductID], [ProductName], [SupplierID], [CategoryID], [QuantityPerUnit], [UnitPrice], [UnitsInStock], [UnitsOnOrder], [ReorderLevel], [Discontinued]
-Table [Order Details] has columns: [OrderID], [ProductID], [UnitPrice], [Quantity], [Discount]
-Table [Orders] has columns: [OrderID], [CustomerID], [EmployeeID], [OrderDate], [RequiredDate], [ShippedDate], [ShipVia], [Freight], [ShipName], [ShipAddress], [ShipCity], [ShipRegion], [ShipPostalCode], [ShipCountry]
+{biz_knowledge}
 
-【表之间的关联关系（严格使用这些关联）】
-- Categories.CategoryID = Products.CategoryID
-- Products.ProductID = Order Details.ProductID
-- Orders.OrderID = Order Details.OrderID
-- Customers.CustomerID = Orders.CustomerID
-- Employees.EmployeeID = Orders.EmployeeID
-- Suppliers.SupplierID = Products.SupplierID
-- Shippers.ShipperID = Orders.ShipVia
+【Northwind 数据库实际表结构】
+{all_schemas}
 
 【用户问题】
 {question}
@@ -471,9 +507,9 @@ Table [Orders] has columns: [OrderID], [CustomerID], [EmployeeID], [OrderDate], 
                 'prompt': prompt,
                 'stream': False,
                 'temperature': 0,
-                'max_tokens': 600
+                'max_tokens': 500
             },
-            timeout=90
+            timeout=60
         )
         sql = response.json()['response'].strip()
         match = re.search(r'(SELECT\s+.*?;)', sql, re.IGNORECASE | re.DOTALL)
